@@ -72,6 +72,40 @@
         .gantt_grid_data .gantt_cell {
             padding: 6px;
         }
+
+        /* Customer tooltip */
+        .customer-tooltip {
+            display: none;
+            position: absolute;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            max-width: 300px;
+            font-size: 14px;
+        }
+
+        .customer-tooltip h4 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 8px;
+        }
+
+        .customer-tooltip p {
+            margin: 5px 0;
+        }
+
+        .customer-cell {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .customer-cell:hover {
+            background-color: #f0f7ff;
+        }
     </style>
 </head>
 
@@ -117,6 +151,9 @@
             <div id="modalContent"></div>
         </div>
     </div>
+
+    <!-- Customer Tooltip -->
+    <div id="customerTooltip" class="customer-tooltip"></div>
 
     <script>
         let currentPage = 1;
@@ -196,20 +233,42 @@
                 name: "projectId",
                 label: "Project ID",
                 align: "center",
-                width: 120,
+                width: 180,
                 template: function (task) {
-                    let badge = "";
+                    let html = task.projectId || "";
+
+                    // Reopen badge
                     if (task.reopen_status) {
                         const color = task.reopen_status === "Yes" ? "#ff4d4f" : "#52c41a";
-                        badge = `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background-color:${color}; color:#fff; font-size:12px; margin-left:5px;">
-                    ${task.reopen_status}
-                </span>`;
+                        html += `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background-color:${color}; color:#fff; font-size:12px; margin-left:5px;">
+                ${task.reopen_status}
+            </span>`;
                     }
-                    return task.projectId + badge;
+
+                    // Subproject status badge (S1, S2, S3...)
+                    if (task.status) {
+                        html += `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background:#1890ff; color:#fff; font-size:12px; margin-left:5px;">
+                S${task.status}
+            </span>`;
+                    }
+
+                    return html;
                 }
-            },
+            }
+            ,
             { name: "project_manager", label: "Project Manager", align: "center", width: 150 },
-            { name: "customer_name", label: "Customer", align: "center", width: 150 }
+            {
+                name: "customer_name",
+                label: "Customer",
+                align: "center",
+                width: 150,
+                template: function (task) {
+                    // Show tooltip for all tasks but prevent multiple tooltips
+                    return `<div class="customer-cell" onmouseover="showCustomerTooltip(event, '${task.id}')" onmouseout="hideCustomerTooltip()">
+            ${task.customer_name || "N/A"}
+        </div>`;
+                }
+            }
         ];
 
 
@@ -253,6 +312,65 @@
             }
         }
 
+        // Show customer tooltip on hover
+        function showCustomerTooltip(event, taskId) {
+            const task = gantt.getTask(taskId);
+
+            // If this task doesn't have customer details but has a parent, try the parent
+            let customerTask = task;
+            if ((!task.customer_details || task.customer_details === "N/A") && task.parent) {
+                customerTask = gantt.getTask(task.parent);
+            }
+
+            // If still no customer details, try to find the root parent
+            if ((!customerTask.customer_details || customerTask.customer_details === "N/A") && customerTask.parent) {
+                let rootTask = customerTask;
+                while (rootTask.parent) {
+                    rootTask = gantt.getTask(rootTask.parent);
+                }
+                customerTask = rootTask;
+            }
+
+            if (!customerTask || !customerTask.customer_details || customerTask.customer_details === "N/A") return;
+
+            // Hide any existing tooltip first to prevent multiple tooltips
+            hideCustomerTooltip();
+
+            const tooltip = document.getElementById("customerTooltip");
+            tooltip.innerHTML = customerTask.customer_details;
+            tooltip.style.display = "block";
+            tooltip.style.left = (event.pageX + 10) + "px";
+            tooltip.style.top = (event.pageY + 10) + "px";
+
+            // Add a small delay to prevent tooltip from showing again immediately
+            tooltip.dataset.lastShown = Date.now();
+        }
+
+        function hideCustomerTooltip() {
+            const tooltip = document.getElementById("customerTooltip");
+            // Only hide if it wasn't just shown (to prevent flickering)
+            if (!tooltip.dataset.lastShown || (Date.now() - parseInt(tooltip.dataset.lastShown)) > 100) {
+                tooltip.style.display = "none";
+            }
+        }
+
+        // Format contact details for display
+        function formatContactDetails(contacts) {
+            if (!contacts || contacts.length === 0) return null;
+
+            let html = "<h4>Customer Details</h4>";
+            contacts.forEach(c => {
+                html += `
+                    <p><strong>${c.customer_name || "N/A"}</strong></p>
+                    <p>Name: ${c.contact_name || "N/A"}</p>
+                    <p>Email: ${c.contact_email || "N/A"}</p>
+                    <p>Phone: ${c.contact_phone_number || "N/A"}</p>
+                    <p>Address: ${c.address || "N/A"}</p>
+                `;
+            });
+            return html;
+        }
+
         // Fetch backend data
         function loadData() {
             fetch(`http://localhost:5000/gantt-data?limit=${pageSize}&page=${currentPage}&search=${encodeURIComponent(searchQuery)}&start_date=${encodeURIComponent(filterStartDate)}&end_date=${encodeURIComponent(filterEndDate)}`)
@@ -277,6 +395,9 @@
                             const start = project.start?.split("T")[0];
                             const end = project.end?.split("T")[0];
 
+                            // Format customer details for the tooltip
+                            const customerDetails = formatContactDetails(project.contacts);
+
                             // Project Info
                             // Badge for reopen_status
                             let reopenBadge = "";
@@ -289,7 +410,6 @@
 
                             // Project Info with badge
                             let projectInfoHTML = `
-                            <p><strong>Name:</strong> ${project.name || "N/A"} ${reopenBadge}</p>
 <div style="margin-bottom:15px; padding:10px; border:1px solid #ccc; border-radius:6px;">
     <p><strong>Name:</strong> ${project.name || "N/A"} ${reopenBadge}</p>
     <p><strong>Description:</strong> ${project.project_details || project.subproject_details || "N/A"}</p>
@@ -373,40 +493,11 @@
                             }
                             payableHTML += `</tbody></table>`;
 
-                            // Contact Details
-                            let contactDetailsHTML = "<h3></h3>";
-                            if (project.contacts && project.contacts.length > 0) {
-                                project.contacts.forEach(c => {
-                                    contactDetailsHTML += `
-                                    <div style="margin-bottom:10px; padding:8px; border:1px solid #ddd; border-radius:6px;">
-                                        Customer: ${c.customer_name || "N/A"}<br>
-                                        Con. Name: ${c.contact_name || "N/A"}<br>
-                                        Email: ${c.contact_email || "N/A"}<br>
-                                        Phone: ${c.contact_phone_number || "N/A"}<br>
-                                        Address: ${c.address || "N/A"}<br>
-                                    </div>
-                                `;
-                                });
-                            } else {
-                                contactDetailsHTML += `
-                                <table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse; width:100%; margin-bottom:15px;">
-                                    <thead style="background:#f5f5f5;">
-                                        <tr><th>Customer</th><th>Contact Name</th><th>Email</th><th>Phone</th><th>Address</th></tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr><td colspan="5" style="text-align:center;">N/A</td></tr>
-                                    </tbody>
-                                </table>
-                            `;
-                            }
-
-                            // Merge everything
+                            // Merge everything (contact details removed from modal)
                             const fullDetailsHTML = `
                             ${projectInfoHTML}
                             ${receivableHTML}
                             ${payableHTML}
-                            <h3>Contacts</h3>
-                            ${contactDetailsHTML}
                         `;
 
                             // Parent task
@@ -416,7 +507,7 @@
                                 start_date: start,
                                 end_date: end,
                                 progress: 0,
-                                open: true,
+                                open: false,
                                 projectId: projectId,
                                 urgency: project.urgency,
                                 details: fullDetailsHTML,
@@ -424,6 +515,7 @@
                                 customer_name: (project.contacts && project.contacts.length > 0)
                                     ? project.contacts[0].customer_name || "N/A"
                                     : "N/A",
+                                customer_details: customerDetails, // This will be shown in the tooltip
                                 reopen_status: project.reopen_status || null
                             });
 
@@ -453,7 +545,6 @@
         <hr>
         ${receivableHTML}
         ${payableHTML}
-        ${contactDetailsHTML}
     `;
 
                                 tasks.data.push({
@@ -471,7 +562,9 @@
                                     customer_name: (project.contacts && project.contacts.length > 0)
                                         ? project.contacts[0].customer_name || "N/A"
                                         : "N/A",
-                                    reopen_status: child.reopen_status || null
+                                    reopen_status: child.reopen_status || null,
+                                    customer_details: null,
+                                    subproject_status: child.status || null
                                 });
 
 
@@ -497,12 +590,19 @@
 
         // Modal on task click (outside loadData to avoid duplicates)
         gantt.attachEvent("onTaskClick", function (id, e) {
+            // Check if click target has the tree icon class
+            if (e.target.classList.contains("gantt_tree_icon")) {
+                return true; // let gantt handle expand/collapse
+            }
+
+            // Otherwise → open modal
             const task = gantt.getTask(id);
             document.getElementById("modalTitle").innerText = task.text;
             document.getElementById("modalContent").innerHTML = task.details || "No details available.";
             document.getElementById("projectModal").style.display = "block";
             return false;
         });
+
 
         // Initial load
         loadData();
