@@ -19,7 +19,13 @@
         #gantt_here {
             width: 100%;
             height: 100vh;
+
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            background: #fff;
         }
+
 
         /* Modal styling */
         #projectModal {
@@ -140,6 +146,9 @@
     <button onclick="applyDateFilter()">Apply Date Filter</button>
     <button onclick="resetFilters()">Reset</button>
 
+    <div id="loadingOverlay"
+        style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); z-index:9999; color:#fff; font-size:24px; text-align:center; padding-top:20%;">
+        Loading...</div>
 
     <div id="gantt_here"></div>
 
@@ -162,6 +171,10 @@
         let searchQuery = "";
         let filterStartDate = "";
         let filterEndDate = "";
+
+        function showLoading() { document.getElementById("loadingOverlay").style.display = "block"; }
+        function hideLoading() { document.getElementById("loadingOverlay").style.display = "none"; }
+
 
         function applySearch() {
             searchQuery = document.getElementById("searchBox").value.trim();
@@ -239,21 +252,24 @@
 
                     // Reopen badge
                     if (task.reopen_status) {
-                        const color = task.reopen_status === "Yes" ? "#ff4d4f" : "#52c41a";
-                        html += `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background-color:${color}; color:#fff; font-size:12px; margin-left:5px;">
-                ${task.reopen_status}
-            </span>`;
+                        const color = task.reopen_status === "Yes" ? "#52c41a" : "#52c41a";
+                        html += `<span style="display:inline-block; padding:1px 6px; border-radius:12px; background-color:${color}; color:#fff; font-size:10px; margin-left:5px;">
+        ${task.reopen_status}
+    </span>`;
                     }
 
-                    // Subproject status badge (S1, S2, S3...)
-                    if (task.status) {
-                        html += `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background:#1890ff; color:#fff; font-size:12px; margin-left:5px;">
-                S${task.status}
-            </span>`;
+                    // Subproject status badge (red) — only for subprojects / child rows
+                    if (task.subproject_status) {
+                        html += `<span style="display:inline-block; padding:1px 6px; border-radius:12px; background:#ff0000; color:#fff; font-size:10px; margin-left:5px;">
+        S${task.subproject_status}
+    </span>`;
                     }
+
+
 
                     return html;
                 }
+
             }
             ,
             { name: "project_manager", label: "Project Manager", align: "center", width: 150 },
@@ -358,21 +374,30 @@
         function formatContactDetails(contacts) {
             if (!contacts || contacts.length === 0) return null;
 
+            let seen = new Set();
             let html = "<h4>Customer Details</h4>";
+
             contacts.forEach(c => {
+                if (seen.has(c.customer_name)) return; // skip duplicates
+                seen.add(c.customer_name);
+
                 html += `
-                    <p><strong>${c.customer_name || "N/A"}</strong></p>
-                    <p>Name: ${c.contact_name || "N/A"}</p>
-                    <p>Email: ${c.contact_email || "N/A"}</p>
-                    <p>Phone: ${c.contact_phone_number || "N/A"}</p>
-                    <p>Address: ${c.address || "N/A"}</p>
-                `;
+            <p><strong>${c.customer_name || "N/A"}</strong></p>
+            <p>Name: ${c.contact_name || "N/A"}</p>
+            <p>Email: ${c.contact_email || "N/A"}</p>
+            <p>Phone: ${c.contact_phone_number || "N/A"}</p>
+            <p>Address: ${c.address || "N/A"}</p>
+            <hr>
+        `;
             });
+
             return html;
         }
 
+
         // Fetch backend data
         function loadData() {
+            showLoading();
             fetch(`http://localhost:5000/gantt-data?limit=${pageSize}&page=${currentPage}&search=${encodeURIComponent(searchQuery)}&start_date=${encodeURIComponent(filterStartDate)}&end_date=${encodeURIComponent(filterEndDate)}`)
                 .then(res => res.json())
                 .then(data => {
@@ -402,7 +427,7 @@
                             // Badge for reopen_status
                             let reopenBadge = "";
                             if (project.reopen_status) {
-                                const badgeColor = project.reopen_status === "Yes" ? "#ff4d4f" : "#ff4d4f";
+                                const badgeColor = project.reopen_status === "Yes" ? "#52c41a" : "#52c41a";
                                 reopenBadge = `<span style="display:inline-block; padding:2px 8px; font-size:12px; border-radius:4px; background-color:${badgeColor}; color:#fff; margin-left:5px;">
                         ${project.reopen_status}
                    </span>`;
@@ -413,12 +438,12 @@
 <div style="margin-bottom:15px; padding:10px; border:1px solid #ccc; border-radius:6px;">
     <p><strong>Name:</strong> ${project.name || "N/A"} ${reopenBadge}</p>
     <p><strong>Description:</strong> ${project.project_details || project.subproject_details || "N/A"}</p>
-    <p><strong>Status:</strong> ${project.urgency || "N/A"}</p>
     <p><strong>Start Date:</strong> ${project.start ? new Date(project.start).toDateString() : "N/A"}</p>
     <p><strong>Expected End Date:</strong> ${project.end ? new Date(project.end).toDateString() : "N/A"}</p>
-    <p><strong>Engineer:</strong> ${project.assign_to || "N/A"}</p>
     <p><strong>Project Manager:</strong> ${project.project_manager || "N/A"}</p>
+    <p><strong>Engineer:</strong> ${project.assign_to || "N/A"}</p>
     <p><strong>Team:</strong> ${project.p_team || "N/A"}</p>
+    <p><strong>Status:</strong> ${project.urgency || "N/A"}</p>
     <p><strong>State:</strong> ${project.state || "N/A"}</p>
 </div>
 `;
@@ -529,7 +554,7 @@
                                 // Badge for reopen_status
                                 let childReopenBadge = "";
                                 if (child.reopen_status) {
-                                    const badgeColor = child.reopen_status === "Yes" ? "#ff4d4f" : "#ff4d4f";
+                                    const badgeColor = child.reopen_status === "Yes" ? "#52c41a" : "#52c41a";
                                     childReopenBadge = `<span style="display:inline-block; padding:2px 6px; font-size:10px; border-radius:12px; background-color:${badgeColor}; color:#fff; margin-left:5px;">
                                    ${child.reopen_status}
                               </span>`;
@@ -539,14 +564,13 @@
         <strong>Subproject:</strong> ${child.name || `Subproject ${index + 1}`} ${childReopenBadge}<br>
         Start: ${childStart || "N/A"}<br>
         End: ${childEnd || "N/A"}<br>
+        Details: ${child.subproject_details || "N/A"}
         Status: ${child.status || "N/A"}<br>
         Urgency: ${child.urgency || "N/A"}<br>
-        Details: ${child.subproject_details || "N/A"}
         <hr>
         ${receivableHTML}
         ${payableHTML}
     `;
-
                                 tasks.data.push({
                                     id: childId,
                                     text: child.name || `Subproject ${index + 1}`,
@@ -585,7 +609,8 @@
                     gantt.clearAll();
                     gantt.parse(tasks);
                 })
-                .catch(err => console.error("Error loading data:", err));
+                .catch(err => console.error("Error loading data:", err))
+                .finally(() => hideLoading());
         }
 
         // Modal on task click (outside loadData to avoid duplicates)
