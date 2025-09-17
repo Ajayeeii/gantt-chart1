@@ -143,7 +143,6 @@ def fetch_data(limit=50, offset=0, search=None, start_date=None, end_date=None):
     cursor.execute(count_query, tuple(params))
     total_count = cursor.fetchone()["total"]
 
-
     # ----------------- Fetch paginated projects -----------------
     query = f"""
     SELECT DISTINCT 
@@ -164,7 +163,6 @@ def fetch_data(limit=50, offset=0, search=None, start_date=None, end_date=None):
 
     cursor.execute(query, (*params, limit, offset))
     projects = cursor.fetchall()
-
 
     # Collect project_ids + contact_ids
     project_ids = [p["project_id"] for p in projects]
@@ -202,6 +200,19 @@ def fetch_data(limit=50, offset=0, search=None, start_date=None, end_date=None):
             tuple(contact_ids),
         )
         contacts = cursor.fetchall()
+
+        # ----------------- Fetch uninvoiced -----------------
+    cursor.execute(
+        f"""
+        SELECT 
+            project_id, service_date, due_date, 
+            project_status, price, comments
+        FROM csa_finance_uninvoiced
+        WHERE project_id IN ({",".join(["%s"]*len(project_ids))})
+        """,
+        tuple(project_ids),
+    )
+    uninvoiced = cursor.fetchall()
 
     # ----------------- Fetch invoices -----------------
     cursor.execute(
@@ -242,6 +253,32 @@ def fetch_data(limit=50, offset=0, search=None, start_date=None, end_date=None):
     )
     unpaid_invoices = cursor.fetchall()
 
+    # ----------------- Fetch paid invoices -----------------
+    cursor.execute(
+        f"""
+        SELECT 
+            project_id, invoice_no, booked_date, received_date, 
+            amount, comments
+        FROM paidinvoices
+        WHERE project_id IN ({",".join(["%s"]*len(project_ids))})
+        """,
+        tuple(project_ids),
+    )
+    paid_invoices = cursor.fetchall()
+
+    # ----------------- Fetch ready to pay -----------------
+    cursor.execute(
+        f"""
+        SELECT 
+            project_id, invoice_no, booked_date, received_date, 
+            amount, comments
+        FROM ready_to_pay
+        WHERE project_id IN ({",".join(["%s"]*len(project_ids))})
+        """,
+        tuple(project_ids),
+    )
+    ready_to_pay = cursor.fetchall()
+
     cursor.close()
     conn.close()
 
@@ -266,7 +303,10 @@ def fetch_data(limit=50, offset=0, search=None, start_date=None, end_date=None):
             "invoices": [],
             "ready_to_invoice": [],
             "unpaid_invoices": [],
+            "uninvoiced": [],
             "contacts": [],
+            "paid_invoices": [],
+            "ready_to_pay": [],
         }
 
     # Attach subprojects
@@ -337,6 +377,56 @@ def fetch_data(limit=50, offset=0, search=None, start_date=None, end_date=None):
                     "booked_date": clean_date(u.get("booked_date")),
                     "received_date": clean_date(u.get("received_date")),
                     "amount": u.get("amount"),
+                }
+            )
+
+        # Attach paid invoices
+    for pi in paid_invoices:
+        pid = int(pi["project_id"])
+        if pid in project_map:
+            project_map[pid]["paid_invoices"].append(
+                {
+                    "invoice_no": pi.get("invoice_no"),
+                    "booked_date": clean_date(pi.get("booked_date")),
+                    "received_date": clean_date(pi.get("received_date")),
+                    "amount": pi.get("amount"),
+                    "comments": pi.get("comments"),
+                }
+            )
+
+    # Attach ready to pay
+    for rp in ready_to_pay:
+        pid = int(rp["project_id"])
+        if pid in project_map:
+            project_map[pid]["ready_to_pay"].append(
+                {
+                    "invoice_no": rp.get("invoice_no"),
+                    "booked_date": clean_date(rp.get("booked_date")),
+                    "received_date": clean_date(rp.get("received_date")),
+                    "amount": rp.get("amount"),
+                    "comments": rp.get("comments"),
+                }
+            )
+
+        # Attach uninvoiced
+    for ui in uninvoiced:
+        pid = int(ui["project_id"])
+
+        # Normalize project_status for safe comparison
+        status = (ui.get("project_status") or "").strip()
+
+        # Skip if status is "MovedToReadyToBeInvoicedTable" (case-insensitive)
+        if status.lower() == "movedtoreadytobeinvoicedtable":
+            continue
+
+        if pid in project_map:
+            project_map[pid]["uninvoiced"].append(
+                {
+                    "service_date": clean_date(ui.get("service_date")),
+                    "due_date": clean_date(ui.get("due_date")),
+                    "project_status": status or "Uninvoiced",  # default if null/empty
+                    "price": ui.get("price"),
+                    "comments": ui.get("comments"),
                 }
             )
 

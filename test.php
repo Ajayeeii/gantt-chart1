@@ -785,26 +785,35 @@
 
             if (!customerTask || !customerTask.customer_details || customerTask.customer_details === "N/A") return;
 
-            // Hide any existing tooltip first to prevent multiple tooltips
-            hideCustomerTooltip();
-
             const tooltip = document.getElementById("customerTooltip");
             tooltip.innerHTML = customerTask.customer_details;
             tooltip.style.display = "block";
             tooltip.style.left = (event.pageX + 10) + "px";
             tooltip.style.top = (event.pageY + 10) + "px";
-
-            // Add a small delay to prevent tooltip from showing again immediately
-            tooltip.dataset.lastShown = Date.now();
         }
 
+        // Hide customer tooltip
         function hideCustomerTooltip() {
             const tooltip = document.getElementById("customerTooltip");
-            // Only hide if it wasn't just shown (to prevent flickering)
-            if (!tooltip.dataset.lastShown || (Date.now() - parseInt(tooltip.dataset.lastShown)) > 100) {
-                tooltip.style.display = "none";
-            }
+            tooltip.style.display = "none";
         }
+
+        // Ensure tooltip hides when leaving gantt area
+        gantt.$container.addEventListener("mouseleave", hideCustomerTooltip);
+
+        // Optional: also hide if user moves too fast and leaves task row
+        document.addEventListener("mousemove", (e) => {
+            const ganttBox = gantt.$container.getBoundingClientRect();
+            if (
+                e.clientX < ganttBox.left ||
+                e.clientX > ganttBox.right ||
+                e.clientY < ganttBox.top ||
+                e.clientY > ganttBox.bottom
+            ) {
+                hideCustomerTooltip();
+            }
+        });
+
 
         // Format contact details for display
         function formatContactDetails(contacts) {
@@ -897,20 +906,30 @@
                                 <tbody>
                         `;
 
-                            let receivables = [...(project.invoices ?? []), ...(project.ready_to_invoice ?? [])];
+                            let receivables = [...(project.invoices ?? []), ...(project.ready_to_invoice ?? []), ...(project.uninvoiced ?? [])];
                             if (receivables.length > 0) {
                                 receivables.forEach(inv => {
+                                    // Use either invoice_number (for real invoices) or "—" for uninvoiced
+                                    const invoiceNo = inv.invoice_number || "—";
+
+                                    // Status: prefer payment_status, else project_status (e.g., "Uninvoiced")
+                                    const status = inv.payment_status || inv.project_status || "N/A";
+
+                                    // Amount: prefer amount, else price
+                                    const amount = inv.amount ? "$" + inv.amount : inv.price ? "$" + inv.price : "N/A";
+
                                     receivableHTML += `
-                                        <tr>
-                                            <td>${inv.invoice_number || "N/A"}</td>
-                                            <td>${inv.service_date || "N/A"}</td>
-                                            <td>${inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "N/A"}</td>
-                                            <td>${inv.payment_status ? inv.payment_status : (inv.project_status || "Ready to be Invoiced")}</td>
-                                            <td style="text-align:right;">${inv.amount ? "$" + inv.amount : inv.price ? "$" + inv.price : "N/A"}</td>
-                                            <td>${inv.comments || "N/A"}</td>
-                                        </tr>
-                                `;
+        <tr>
+            <td>${invoiceNo}</td>
+            <td>${inv.service_date || "N/A"}</td>
+            <td>${inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "N/A"}</td>
+            <td>${status}</td>
+            <td style="text-align:right;">${amount}</td>
+            <td>${inv.comments || "N/A"}</td>
+        </tr>
+    `;
                                 });
+
                             } else {
                                 receivableHTML += `
                                         <tr>
@@ -922,37 +941,59 @@
 
                             // Payable Details
                             let payableHTML = `
-                            <h3>Payable Details</h3>
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Invoice No</th><th>Invoice Date</th><th>Booked Date</th><th>Received Date</th><th>Amount</th><th>Comments</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                        `;
+    <h3>Payable Details</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Invoice No</th>
+                <th>Invoice Date</th>
+                <th>Booked Date</th>
+                <th>Received Date</th>
+                <th>Amount</th>
+                <th>Comments</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+`;
 
-                            if ((project.unpaid_invoices?.length || 0) > 0) {
-                                project.unpaid_invoices.forEach(inv => {
+                            const renderPayableRows = (invoices = [], statusLabel = "") => {
+                                if (invoices.length === 0) return;
+                                invoices.forEach(inv => {
                                     payableHTML += `
-                                        <tr>
-                                            <td>${inv.invoice_no || "N/A"}</td>
-                                            <td>${inv.invoice_date || "N/A"}</td>
-                                            <td>${inv.booked_date || "N/A"}</td>
-                                            <td>${inv.received_date || "N/A"}</td>
-                                            <td style="text-align:right;">${inv.amount ? "$" + inv.amount : "N/A"}</td>
-                                            <td>${inv.comments || "N/A"}</td>
-                                        </tr>
-                                `;
+            <tr>
+                <td>${inv?.invoice_no || "N/A"}</td>
+                <td>${inv?.invoice_date || "N/A"}</td>
+                <td>${inv?.booked_date || "N/A"}</td>
+                <td>${inv?.received_date || "N/A"}</td>
+                <td style="text-align:right;">${inv?.amount ? "$" + inv.amount : "N/A"}</td>
+                <td>${inv?.comments || "N/A"}</td>
+                <td>${statusLabel}</td>
+            </tr>
+        `;
                                 });
-                            } else {
+                            };
+
+                            // Always call with fallback to empty array
+                            renderPayableRows(project?.unpaid_invoices || [], "Unpaid");
+                            renderPayableRows(project?.ready_to_pay || [], "Ready to Pay");
+                            renderPayableRows(project?.paid_invoices || [], "Paid");
+
+                            // If no rows added, show N/A
+                            if (
+                                (!project?.unpaid_invoices || project.unpaid_invoices.length === 0) &&
+                                (!project?.ready_to_pay || project.ready_to_pay.length === 0) &&
+                                (!project?.paid_invoices || project.paid_invoices.length === 0)
+                            ) {
                                 payableHTML += `
-                                        <tr>
-                                            <td colspan="6" style="text-align:center;">N/A</td>
-                                        </tr>
-                                `;
+        <tr>
+            <td colspan="7" style="text-align:center;">N/A</td>
+        </tr>
+    `;
                             }
+
                             payableHTML += `</tbody></table>`;
+
 
                             // Merge everything (contact details removed from modal)
                             const fullDetailsHTML = `
